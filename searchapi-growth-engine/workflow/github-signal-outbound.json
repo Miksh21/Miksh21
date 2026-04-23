@@ -1,0 +1,448 @@
+{
+  "name": "GitHub Signal Outbound — SearchApi",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## GitHub Signal → Outbound Workflow\n\nRuns daily at 09:00 UTC. Detects new LLM-framework imports on public GitHub repos, enriches the owning company, finds a technical buyer, and drafts a personalized cold email. Writes qualified leads to a Google Sheet for human review.\n\n**Required credentials:** GitHub Personal Access Token, Anthropic API key, Clay API key (optional), Google Sheets OAuth.\n**Required env vars:** `GOOGLE_SHEET_ID`, `CLAY_ENABLED` (true/false), `CLAY_ENRICH_COMPANY_ENDPOINT`, `CLAY_FIND_PERSON_ENDPOINT`, `SENDER_NAME`, `SENDER_COMPANY`.",
+        "height": 220,
+        "width": 860,
+        "color": 5
+      },
+      "id": "note-overview",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [80, 40]
+    },
+    {
+      "parameters": {
+        "content": "## 1. Source\nDaily schedule + framework query list",
+        "height": 380,
+        "width": 460,
+        "color": 7
+      },
+      "id": "note-source",
+      "name": "Source section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 420]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Detect + dedup\nQuery GitHub, flatten, filter against Sheet state",
+        "height": 380,
+        "width": 680,
+        "color": 7
+      },
+      "id": "note-detect",
+      "name": "Detect section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [720, 420]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Enrich\nFetch org metadata, extract domain, optional Clay enrichment",
+        "height": 380,
+        "width": 680,
+        "color": 6
+      },
+      "id": "note-enrich",
+      "name": "Enrich section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1420, 420]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Qualify\nICP score, contact search, email generation",
+        "height": 380,
+        "width": 680,
+        "color": 6
+      },
+      "id": "note-qualify",
+      "name": "Qualify section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2120, 420]
+    },
+    {
+      "parameters": {
+        "content": "## 5. Deliver\nWrite qualified lead to Sheet, log run stats",
+        "height": 380,
+        "width": 460,
+        "color": 4
+      },
+      "id": "note-deliver",
+      "name": "Deliver section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2820, 420]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Daily 09:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [300, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build 6 framework queries, one item per framework.\n// Each item fires the GitHub Code Search node once.\nconst yesterday = new Date();\nyesterday.setUTCDate(yesterday.getUTCDate() - 1);\nconst pushedSince = yesterday.toISOString().split('T')[0];\n\nconst frameworks = [\n  { framework: 'LangChain',  query: 'from langchain_openai import language:Python' },\n  { framework: 'LlamaIndex', query: 'from llama_index.core import language:Python' },\n  { framework: 'LangGraph',  query: 'from langgraph.graph import language:Python' },\n  { framework: 'CrewAI',     query: 'from crewai import Agent language:Python' },\n  { framework: 'Haystack',   query: 'from haystack import Pipeline language:Python' },\n  { framework: 'AutoGen',    query: 'from autogen import language:Python' }\n];\n\nreturn frameworks.map(f => ({ json: { ...f, pushedSince } }));"
+      },
+      "id": "node-build-queries",
+      "name": "Build Framework Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/search/code",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q",        "value": "={{ $json.query }}" },
+            { "name": "sort",     "value": "indexed" },
+            { "name": "order",    "value": "desc" },
+            { "name": "per_page", "value": "30" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept",        "value": "application/vnd.github+json" },
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.githubApi.token }}" }
+          ]
+        },
+        "options": {
+          "retry": { "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 2000 },
+          "timeout": 20000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "node-github-search",
+      "name": "GitHub Code Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [740, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REPLACE_WITH_GITHUB_CREDENTIAL_ID", "name": "GitHub PAT" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten all framework searches into unique org-level records.\n// One record per (org, repo) pair — we only keep first repo seen per org.\nconst allItems = $input.all();\nconst seenOrgs = new Set();\nconst out = [];\n\nfor (const item of allItems) {\n  const framework = item.json.framework;\n  const hits = item.json.items || [];\n  for (const hit of hits) {\n    const repo = hit.repository;\n    if (!repo || repo.fork) continue;\n    const ownerType = repo.owner && repo.owner.type;\n    if (ownerType !== 'Organization' && ownerType !== 'User') continue;\n    const orgLogin = repo.owner.login;\n    if (seenOrgs.has(orgLogin)) continue;\n    seenOrgs.add(orgLogin);\n    out.push({\n      json: {\n        framework,\n        org_login: orgLogin,\n        org_type: ownerType,\n        org_api_url: `https://api.github.com/users/${orgLogin}`,\n        repo_full_name: repo.full_name,\n        repo_url: repo.html_url,\n        repo_description: repo.description || '',\n        file_path: hit.path,\n        file_html_url: hit.html_url,\n        detected_at: new Date().toISOString()\n      }\n    });\n  }\n}\nreturn out;"
+      },
+      "id": "node-flatten",
+      "name": "Flatten + Extract Orgs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 500]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "node-sheet-read",
+      "name": "Read Contacted Orgs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1180, 500],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GSHEETS_CREDENTIAL_ID", "name": "Google Sheets" }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only orgs not touched in the last 90 days per the qualification doc.\nconst newOrgs  = $('Flatten + Extract Orgs').all().map(i => i.json);\nconst contacted = $input.all().map(i => i.json);\n\nconst ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);\nconst seen = new Set();\nfor (const row of contacted) {\n  const ts = Date.parse(row.timestamp || row.detected_at || 0);\n  if (row.org_login && (isNaN(ts) || ts >= ninetyDaysAgo)) {\n    seen.add(String(row.org_login).toLowerCase());\n  }\n}\n\nconst fresh = newOrgs.filter(o => !seen.has(String(o.org_login).toLowerCase()));\nreturn fresh.map(f => ({ json: f }));"
+      },
+      "id": "node-dedup",
+      "name": "Dedup Against State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.org_api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept",        "value": "application/vnd.github+json" },
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.githubApi.token }}" }
+          ]
+        },
+        "options": {
+          "retry": { "retryOnFail": true, "maxTries": 3, "waitBetweenTries": 2000 },
+          "timeout": 15000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "node-org-fetch",
+      "name": "Fetch Org Metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REPLACE_WITH_GITHUB_CREDENTIAL_ID", "name": "GitHub PAT" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge GitHub org metadata back with the signal context, extract a domain.\nconst signals = $('Dedup Against State').all().map(i => i.json);\nconst orgResponses = $input.all().map(i => i.json);\n\nfunction domainFromUrl(url) {\n  if (!url) return null;\n  try {\n    const u = new URL(url.startsWith('http') ? url : `https://${url}`);\n    return u.hostname.replace(/^www\\./, '').toLowerCase();\n  } catch (e) {\n    return null;\n  }\n}\n\nconst out = [];\nfor (let i = 0; i < signals.length; i++) {\n  const sig = signals[i];\n  const org = orgResponses[i] || {};\n  const domain = domainFromUrl(org.blog) || domainFromUrl(org.email && org.email.split('@')[1]);\n  if (!domain) continue;\n  out.push({\n    json: {\n      ...sig,\n      company_name: org.name || org.login,\n      company_bio: org.bio || org.description || '',\n      company_location: org.location || '',\n      company_blog: org.blog || '',\n      company_public_repos: org.public_repos || 0,\n      company_followers: org.followers || 0,\n      company_domain: domain\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "node-extract-domain",
+      "name": "Extract Domain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1720, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAY_ENRICH_COMPANY_ENDPOINT }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "domain", "value": "={{ $json.company_domain }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.clayApi.token }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "options": {
+          "retry": { "retryOnFail": true, "maxTries": 2, "waitBetweenTries": 3000 },
+          "timeout": 20000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "node-clay-enrich",
+      "name": "Clay Enrich Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1940, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REPLACE_WITH_CLAY_CREDENTIAL_ID", "name": "Clay API" }
+      },
+      "notesInFlow": true,
+      "notes": "Feature-flagged: skip downstream logic uses $env.CLAY_ENABLED to fall back to GitHub-only data."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Weighted ICP scoring per docs/icp.md.\n// Works with or without Clay enrichment — Clay data just sharpens the score.\nconst clayOn = String($env.CLAY_ENABLED || 'false').toLowerCase() === 'true';\nconst signals = $('Extract Domain').all().map(i => i.json);\nconst clayData = clayOn ? $input.all().map(i => i.json) : [];\n\nfunction scoreOne(sig, clay) {\n  const size     = clay && clay.employee_count ? Number(clay.employee_count) : (sig.company_public_repos * 5 || 25);\n  const industry = clay && clay.industry ? String(clay.industry).toLowerCase() : '';\n  const country  = clay && clay.country ? String(clay.country).toUpperCase() : '';\n\n  const frameworkRecency = 10;\n  const teamSizeFit      = size >= 30 && size <= 150 ? 10 : size >= 10 && size <= 500 ? 7 : 3;\n  const aiNative         = /(^|\\b)(ai|ml|llm|agent|retriev|rag)($|\\b)/.test(`${sig.company_bio} ${sig.repo_description} ${industry}`) ? 10 : 5;\n  const fundingGrowth    = clay && clay.last_funding_amount ? 10 : 5;\n  const geography        = ['US','GB','DE','NL','FR','ES','IT','IE','PL','LT','CZ','PT','SE','DK','FI','IL'].includes(country) ? 10 : (country ? 4 : 6);\n  const frameworkFit     = ['LangChain','LlamaIndex','LangGraph'].includes(sig.framework) ? 10 : 8;\n\n  const raw = frameworkRecency * 2.5 + teamSizeFit * 2.0 + aiNative * 2.0 + fundingGrowth * 1.5 + geography * 1.0 + frameworkFit * 1.0;\n  const score = Math.round(raw);\n  const tier = score >= 80 ? 1 : score >= 60 ? 2 : score >= 40 ? 3 : 0;\n  return { score, tier };\n}\n\nconst out = [];\nfor (let i = 0; i < signals.length; i++) {\n  const sig = signals[i];\n  const clay = clayData[i] || null;\n  const { score, tier } = scoreOne(sig, clay);\n  if (tier === 0) continue;\n  out.push({ json: { ...sig, clay_enriched: !!clay, icp_score: score, tier } });\n}\nreturn out;"
+      },
+      "id": "node-score",
+      "name": "ICP Score + Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAY_FIND_PERSON_ENDPOINT }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "domain", "value": "={{ $json.company_domain }}" },
+            { "name": "titles", "value": "Founding Engineer|Head of AI|AI Lead|Staff Engineer|Principal Engineer|CTO|VP Engineering" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $credentials.clayApi.token }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "options": {
+          "retry": { "retryOnFail": true, "maxTries": 2, "waitBetweenTries": 3000 },
+          "timeout": 20000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "node-find-person",
+      "name": "Clay Find Person",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2380, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REPLACE_WITH_CLAY_CREDENTIAL_ID", "name": "Clay API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Drop rows without a valid technical buyer email.\nconst base = $('ICP Score + Filter').all().map(i => i.json);\nconst people = $input.all().map(i => i.json);\n\nconst out = [];\nfor (let i = 0; i < base.length; i++) {\n  const row = base[i];\n  const p = people[i] || {};\n  if (!p.email || !p.email.includes('@')) continue;\n  out.push({\n    json: {\n      ...row,\n      contact_name:  p.name  || p.full_name || '',\n      contact_email: p.email,\n      contact_title: p.title || p.job_title  || ''\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "node-has-contact",
+      "name": "Keep Rows With Contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-opus-4-6\",\n  \"max_tokens\": 600,\n  \"system\": \"You are writing a single cold email on behalf of a SERP API product called SearchApi. The recipient is a technical buyer at an AI-native company that just committed an import for {{ $json.framework }} to their public repo. Rules: 80-100 words max. Plain text, no HTML, no emoji, no exclamation marks. Reference the repo by name and the framework. Infer one specific pain from the repo description. Close with a question CTA, not a hard ask. Do not mention that you saw their commit or repo. Never start with 'Hope you're well'. Subject line: lowercase, two words, flows into the body. Output JSON only: {\\\"subject\\\": \\\"...\\\", \\\"body\\\": \\\"...\\\"}.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Company: {{ $json.company_name }}\\nDomain: {{ $json.company_domain }}\\nFramework: {{ $json.framework }}\\nRepo: {{ $json.repo_full_name }}\\nRepo description: {{ $json.repo_description }}\\nContact first name: {{ ($json.contact_name || '').split(' ')[0] }}\\nContact title: {{ $json.contact_title }}\\nSender: {{ $env.SENDER_NAME }} at {{ $env.SENDER_COMPANY }}\"\n    }\n  ]\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "=REPLACE_WITH_ANTHROPIC_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type",      "value": "application/json" }
+          ]
+        },
+        "options": {
+          "retry": { "retryOnFail": true, "maxTries": 2, "waitBetweenTries": 3000 },
+          "timeout": 30000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "node-claude",
+      "name": "Claude Generate Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2820, 500],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REPLACE_WITH_ANTHROPIC_CREDENTIAL_ID", "name": "Anthropic API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude response, merge with qualified row, prepare Sheet payload.\nconst qualified = $('Keep Rows With Contact').all().map(i => i.json);\nconst claudeResp = $input.all().map(i => i.json);\n\nconst out = [];\nfor (let i = 0; i < qualified.length; i++) {\n  const q = qualified[i];\n  const resp = claudeResp[i] || {};\n  const text = (resp.content && resp.content[0] && resp.content[0].text) || '{}';\n  let parsed = { subject: '', body: '' };\n  try {\n    const match = text.match(/\\{[\\s\\S]*\\}/);\n    if (match) parsed = JSON.parse(match[0]);\n  } catch (e) {\n    parsed = { subject: '', body: text };\n  }\n  out.push({\n    json: {\n      timestamp: new Date().toISOString(),\n      company: q.company_name,\n      domain: q.company_domain,\n      framework: q.framework,\n      repo_url: q.repo_url,\n      commit_date: q.detected_at,\n      contact_name: q.contact_name,\n      contact_email: q.contact_email,\n      contact_title: q.contact_title,\n      icp_score: q.icp_score,\n      tier: q.tier,\n      subject: parsed.subject || '',\n      body: parsed.body || '',\n      status: 'queued',\n      org_login: q.org_login\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "node-shape-row",
+      "name": "Shape Sheet Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, 500]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "node-sheet-append",
+      "name": "Append Qualified Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2880, 500],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_GSHEETS_CREDENTIAL_ID", "name": "Google Sheets" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log run statistics — number of signals, qualified leads, etc.\nconst detected  = $('Flatten + Extract Orgs').all().length;\nconst fresh     = $('Dedup Against State').all().length;\nconst domained  = $('Extract Domain').all().length;\nconst qualified = $('ICP Score + Filter').all().length;\nconst contacted = $('Keep Rows With Contact').all().length;\nconst written   = $input.all().length;\n\nconsole.log(JSON.stringify({\n  run_at: new Date().toISOString(),\n  detected,\n  fresh,\n  domained,\n  qualified,\n  contacted,\n  written\n}));\n\nreturn [{ json: { run_at: new Date().toISOString(), detected, fresh, domained, qualified, contacted, written } }];"
+      },
+      "id": "node-log",
+      "name": "Log Run Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3260, 500]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily 09:00 UTC": {
+      "main": [[{ "node": "Build Framework Queries", "type": "main", "index": 0 }]]
+    },
+    "Build Framework Queries": {
+      "main": [[{ "node": "GitHub Code Search", "type": "main", "index": 0 }]]
+    },
+    "GitHub Code Search": {
+      "main": [[{ "node": "Flatten + Extract Orgs", "type": "main", "index": 0 }]]
+    },
+    "Flatten + Extract Orgs": {
+      "main": [[{ "node": "Read Contacted Orgs", "type": "main", "index": 0 }]]
+    },
+    "Read Contacted Orgs": {
+      "main": [[{ "node": "Dedup Against State", "type": "main", "index": 0 }]]
+    },
+    "Dedup Against State": {
+      "main": [[{ "node": "Fetch Org Metadata", "type": "main", "index": 0 }]]
+    },
+    "Fetch Org Metadata": {
+      "main": [[{ "node": "Extract Domain", "type": "main", "index": 0 }]]
+    },
+    "Extract Domain": {
+      "main": [[{ "node": "Clay Enrich Company", "type": "main", "index": 0 }]]
+    },
+    "Clay Enrich Company": {
+      "main": [[{ "node": "ICP Score + Filter", "type": "main", "index": 0 }]]
+    },
+    "ICP Score + Filter": {
+      "main": [[{ "node": "Clay Find Person", "type": "main", "index": 0 }]]
+    },
+    "Clay Find Person": {
+      "main": [[{ "node": "Keep Rows With Contact", "type": "main", "index": 0 }]]
+    },
+    "Keep Rows With Contact": {
+      "main": [[{ "node": "Claude Generate Email", "type": "main", "index": 0 }]]
+    },
+    "Claude Generate Email": {
+      "main": [[{ "node": "Shape Sheet Row", "type": "main", "index": 0 }]]
+    },
+    "Shape Sheet Row": {
+      "main": [[{ "node": "Append Qualified Lead", "type": "main", "index": 0 }]]
+    },
+    "Append Qualified Lead": {
+      "main": [[{ "node": "Log Run Stats", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "active": false,
+  "versionId": "",
+  "meta": {},
+  "tags": []
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "One row written to the Google Sheet by the workflow. This is what an enriched + qualified + email-generated record looks like end to end. Data is real (repo, framework, detection) except the contact email, which is a placeholder.",
+  "timestamp": "2026-04-22T09:03:14Z",
+  "company": "local-genAI-search",
+  "domain": "milosh.org",
+  "framework": "LangChain",
+  "repo_url": "https://github.com/nikolamilosevic86/local-genAI-search",
+  "commit_date": "2026-04-21T18:42:00Z",
+  "contact_name": "Nikola Milošević",
+  "contact_email": "REPLACE_WITH_ENRICHED_EMAIL",
+  "contact_title": "Lead AI Research Engineer",
+  "icp_score": 72,
+  "tier": 2,
+  "subject": "langchain grounding",
+  "body": "Hi Nikola,\n\nlocal-genAI-search ties Llama 3 + Qdrant into a grounded search over local files — nice shape. If you ever want to answer over the live web too, the usual next step is wiring a SERP tool into the LangChain chain, and that's where most teams lose a weekend to rate limits and HTML parsing.\n\nSearchApi is a drop-in LangChain tool for Google, Bing, and YouTube results with sub-second latency — it's what Anthropic and Scale use. Worth a look as a secondary retriever alongside Qdrant?\n\n— Jan @ SearchApi",
+  "status": "queued",
+  "org_login": "nikolamilosevic86",
+  "_enrichment_trace": {
+    "signal_detected_by": "GitHub Code Search — from langchain_openai import language:Python",
+    "dedup_check": "pass (not in Sheet within 90d)",
+    "icp_scoring": {
+      "framework_recency": 10,
+      "team_size_fit": 7,
+      "ai_native": 10,
+      "funding_growth": 5,
+      "geography": 10,
+      "framework_fit": 10,
+      "raw": 72,
+      "recency_multiplier": 1.0
+    },
+    "clay_company_lookup": "skipped (CLAY_ENABLED=false in this run)",
+    "clay_person_lookup": "skipped (used GitHub profile email fallback — placeholder here)",
+    "email_generation_model": "claude-opus-4-6"
+  }
+}
