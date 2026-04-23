@@ -17,16 +17,17 @@ for real-world grounding.
 - `workflow/github-signal-outbound.json` — importable n8n workflow
 - `workflow/SETUP.md` — 10-minute setup guide
 - `docs/` — nine documents covering the GTM thinking
-- `examples/sample-emails/` — five emails generated from real public repos
-- `examples/sample-output.json` — one full Sheet row end-to-end
+- `examples/sample-run.md` — a real run against today's GitHub data: 5 leads, 3 queued, 1 flagged, 1 dropped
+- `examples/sample-emails/` — the individual drafted emails per lead
+- `examples/sample-output.json` — the same five leads as structured records
 - `STRATEGY.md` — why this workflow, what it doesn't try to do
 
 ## Read in 90 seconds
 
 1. [STRATEGY.md](STRATEGY.md) — the thesis
-2. [docs/signals.md](docs/signals.md) — what the workflow watches
-3. [docs/copy.md](docs/copy.md) — what it writes
-4. [examples/sample-emails/](examples/sample-emails/) — what it ships
+2. [examples/sample-run.md](examples/sample-run.md) — what one run produces, end to end
+3. [docs/signals.md](docs/signals.md) — what the workflow watches
+4. [docs/copy.md](docs/copy.md) — what it writes
 
 ## Run locally
 

@@ -1,28 +1,22 @@
-# 04 — AI-ANK / Na2SQL (LlamaIndex)
+# 04 — AI-ANK / Na2SQL (LlamaIndex) — DROPPED
 
 **Source repo:** https://github.com/AI-ANK/Na2SQL
 **Framework:** LlamaIndex
 **Detected import:** `from llama_index.core import` in `app.py`
-**Repo description:** "Welcome to the Natural Language to SQL demo project using LlamaIndex! This application is designed to demonstrate the innovative use of Large Language Models (LLMs) in translating natural language queries into SQL queries, and fetching meaningful insights from a database."
-**Persona match:** Primary target — individual maintainer
-**ICP score (illustrative):** 58 (Tier 3)
+**Enrichment attempt:** GitHub profile has null `name`, null `bio`,
+empty `blog`, null `email`. No discoverable domain.
 
 ---
 
-**To:** Ankush
-**Subject:** serp fallback
+## Why this was dropped
 
-Hi Ankush,
+The workflow's Extract Domain step (step 8) requires a resolvable company
+domain — either from the GitHub org's `blog` field or a parseable email.
+This profile has neither. The row exits the pipeline before enrichment,
+scoring, or email generation.
 
-Na2SQL ships the happy path for NL → SQL on a known schema. The usual
-follow-up question from users once that works is "what about data that's
-not in the DB yet?" — which is where a web-grounded fallback ends up on
-the roadmap.
+**No email was drafted.**
 
-SearchApi is a LlamaIndex-compatible retriever for Google, Bing, Maps,
-YouTube. Two lines to wire in, used by Anthropic and Scale. Good fit for
-the "I asked and it wasn't in the warehouse" case.
-
-Worth a look as the second retriever?
-
-— Jan @ SearchApi
+This is correct workflow behavior. Roughly 30% of User-owned repos have
+this shape — the workflow accepts the drop rather than fabricating contact
+data.

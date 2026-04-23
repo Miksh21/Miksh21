@@ -3,9 +3,9 @@
 **Source repo:** https://github.com/davidpadbury/claude-stonks-agent
 **Framework:** LangGraph
 **Detected import:** `from langgraph.graph import` in `ui.py`
-**Repo description:** "Example langchain/langgraph agent using Claude v2.1 on AWS bedrock"
-**Persona match:** Primary target — repo owner is the builder
-**ICP score (illustrative):** 61
+**Enriched company:** David Padbury (independent engineer, Madison WI)
+**Enriched domain:** davidpadbury.com
+**ICP score:** 65 → **Tier 2, queued** (templated, no follow-up past E2)
 
 ---
 

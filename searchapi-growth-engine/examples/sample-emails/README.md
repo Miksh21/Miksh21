@@ -1,20 +1,18 @@
-# Sample Emails
+# Sample emails
 
-Five emails generated from real public GitHub repos that imported a supported
-LLM framework. The repo URLs and framework detections are real; contact
-names are placeholders unless the repo owner's first name is obvious from
-the account.
+Five emails pulled from the run in [`../sample-run.md`](../sample-run.md).
+Real GitHub repos, real framework detections. Contact emails are real only
+where the GitHub profile exposes one (lead 5). The others are marked pending
+Clay waterfall verification.
 
-The emails here show what the workflow produces end-to-end. Reply rates are
-not yet measured — these are illustrative of the output format, not a
-performance claim.
-
-Each file is named `0X-<org-or-user>-<framework>.md`.
+The run log in `sample-run.md` is the primary artifact — it has scoring
+breakdowns, status per lead, and the workflow's edge cases. These individual
+files exist as a quick-skim version of what each drafted email looks like.
 
 ## Files
 
-- `01-nikolamilosevic86-langchain.md`
-- `02-astrabert-llamaindex.md`
-- `03-davidpadbury-langgraph.md`
-- `04-ai-ank-llamaindex.md`
-- `05-agicto-crewai.md`
+- [`01-nikolamilosevic86-langchain.md`](01-nikolamilosevic86-langchain.md) — queued, Tier 2
+- [`02-astrabert-llamaindex.md`](02-astrabert-llamaindex.md) — flagged (vendor employee)
+- [`03-davidpadbury-langgraph.md`](03-davidpadbury-langgraph.md) — queued, Tier 2
+- [`04-ai-ank-llamaindex.md`](04-ai-ank-llamaindex.md) — dropped (no domain)
+- [`05-agicto-crewai.md`](05-agicto-crewai.md) — queued, Tier 3

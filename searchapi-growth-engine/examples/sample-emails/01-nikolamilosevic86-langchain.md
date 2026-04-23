@@ -3,9 +3,9 @@
 **Source repo:** https://github.com/nikolamilosevic86/local-genAI-search
 **Framework:** LangChain
 **Detected import:** `from langchain_openai import` in `api.py`
-**Repo description:** "Local-GenAI-Search is a generative search engine based on Llama 3, langchain and qdrant that answers questions based on your local files"
-**Persona match:** Primary target — repo owner is the builder
-**ICP score (illustrative):** 72
+**Enriched company:** Nikola Milošević (individual, NLP/ML researcher)
+**Enriched domain:** inspiratron.org
+**ICP score:** 79 → **Tier 2, queued** (review note: downgrade to Tier 3, individual repo)
 
 ---
 
