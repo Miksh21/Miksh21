@@ -1,0 +1,501 @@
+{
+  "name": "BESS Signal Detection",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "11111111-0001-0000-0000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-200, -100]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000002",
+      "name": "Cron Mon 06:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-200, 100]
+    },
+    {
+      "parameters": {
+        "url": "https://api.neso.energy/api/3/action/datapackage_show?id=transmission-entry-capacity-tec-register",
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000010",
+      "name": "GET datapackage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [80, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resolve the CSV resource URL from the NESO datapackage response.\n// The datapackage exposes a `resources` array; we want the first CSV.\nconst pkg = $input.first().json;\nconst resources = (pkg?.result?.resources) || (pkg?.resources) || [];\nconst csv = resources.find(r => (r.format || '').toLowerCase() === 'csv') || resources[0];\nif (!csv || !csv.path) {\n  throw new Error('Could not resolve CSV resource from datapackage response');\n}\nreturn [{ json: { csv_url: csv.path, resolved_at: new Date().toISOString() } }];"
+      },
+      "id": "11111111-0001-0000-0000-000000000011",
+      "name": "Resolve CSV URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.csv_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000020",
+      "name": "GET CSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the NESO TEC CSV into one item per row.\n// NESO column names vary slightly between releases, so we map flexibly.\nconst raw = $input.first().json.data || $input.first().json;\nconst text = typeof raw === 'string' ? raw : (raw.body || '');\nif (!text) throw new Error('Empty CSV body');\n\nfunction parseCsv(s) {\n  const rows = [];\n  let i = 0, field = '', row = [], inQ = false;\n  while (i < s.length) {\n    const c = s[i];\n    if (inQ) {\n      if (c === '\"' && s[i+1] === '\"') { field += '\"'; i += 2; continue; }\n      if (c === '\"') { inQ = false; i++; continue; }\n      field += c; i++; continue;\n    }\n    if (c === '\"') { inQ = true; i++; continue; }\n    if (c === ',') { row.push(field); field = ''; i++; continue; }\n    if (c === '\\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }\n    if (c === '\\r') { i++; continue; }\n    field += c; i++;\n  }\n  if (field.length || row.length) { row.push(field); rows.push(row); }\n  return rows;\n}\n\nconst rows = parseCsv(text).filter(r => r.length > 1);\nconst header = rows.shift().map(h => h.trim());\nconst idx = (name) => header.findIndex(h => h.toLowerCase().replace(/[^a-z0-9]/g, '') === name.toLowerCase().replace(/[^a-z0-9]/g, ''));\n\nconst projectIdx = [idx('ProjectName'), idx('ProjectRef'), idx('CustomerName'), idx('GSP')].find(i => i >= 0);\nconst developerIdx = [idx('Customer'), idx('CustomerName'), idx('Company'), idx('Developer')].find(i => i >= 0);\nconst plantIdx = [idx('PlantType'), idx('Technology'), idx('PlantTypeRev')].find(i => i >= 0);\nconst mwIdx = [idx('MWConnected'), idx('MW'), idx('MWeffective'), idx('CapacityMW'), idx('GenerationCapacityMW')].find(i => i >= 0);\nconst connIdx = [idx('ConnectionDate'), idx('CompletionDate'), idx('AcceptedDate')].find(i => i >= 0);\nconst statusIdx = [idx('Status'), idx('ProjectStatus'), idx('ConnectionStatus')].find(i => i >= 0);\n\nconst pullDate = new Date().toISOString();\nconst out = [];\nfor (let r = 0; r < rows.length; r++) {\n  const row = rows[r];\n  if (!row.some(v => v && v.trim())) continue;\n  const obj = Object.fromEntries(header.map((h, i) => [h, row[i] ?? '']));\n  out.push({\n    json: {\n      pull_date: pullDate,\n      project_id: (projectIdx >= 0 ? row[projectIdx] : `row-${r}`) || `row-${r}`,\n      developer: developerIdx >= 0 ? row[developerIdx] : null,\n      plant_type: plantIdx >= 0 ? row[plantIdx] : null,\n      mw: mwIdx >= 0 ? Number(String(row[mwIdx]).replace(/[^0-9.-]/g, '')) || null : null,\n      connection_date: connIdx >= 0 ? row[connIdx] : null,\n      status: statusIdx >= 0 ? row[statusIdx] : null,\n      raw: obj\n    }\n  });\n}\nreturn out;"
+      },
+      "id": "11111111-0001-0000-0000-000000000021",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into tec_snapshots\n  (pull_date, project_id, developer, plant_type, mw, connection_date, status, raw)\nvalues\n  ($1, $2, $3, $4, $5, $6, $7, $8)\non conflict (pull_date, project_id) do nothing;",
+        "options": {
+          "queryReplacement": "={{ $json.pull_date }},={{ $json.project_id }},={{ $json.developer }},={{ $json.plant_type }},={{ $json.mw }},={{ $json.connection_date }},={{ $json.status }},={{ JSON.stringify($json.raw) }}"
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000022",
+      "name": "Upsert tec_snapshots",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [960, 0],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CRED_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with pulls as (\n  select distinct pull_date from tec_snapshots order by pull_date desc limit 2\n),\nlatest as (\n  select * from tec_snapshots where pull_date = (select max(pull_date) from pulls)\n),\nprevious as (\n  select * from tec_snapshots\n  where pull_date = (\n    select min(pull_date) from pulls where pull_date < (select max(pull_date) from pulls)\n  )\n)\nselect l.pull_date, l.project_id, l.developer, l.plant_type, l.mw,\n       l.connection_date, l.status\nfrom latest l\nleft join previous p on p.project_id = l.project_id\nwhere p.project_id is null\norder by l.mw desc nulls last;",
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000023",
+      "name": "Diff vs previous pull",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1180, 0],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CRED_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stage 3: keep BESS rows whose connection_date falls in 2027-01-01..2035-12-31.\nconst BESS = /battery|storage|bess/i;\nconst from = new Date('2027-01-01').getTime();\nconst to   = new Date('2035-12-31').getTime();\nreturn $input.all().filter(item => {\n  const j = item.json;\n  if (!BESS.test(j.plant_type || '')) return false;\n  if (!j.connection_date) return false;\n  const t = new Date(j.connection_date).getTime();\n  return Number.isFinite(t) && t >= from && t <= to;\n});"
+      },
+      "id": "11111111-0001-0000-0000-000000000030",
+      "name": "Filter: BESS + window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stage 3.5: cap enrichment to top 10 developers by MW per run.\n// Constraint: keep Clay credit cost under $1/run.\nconst items = $input.all().slice();\nitems.sort((a, b) => (Number(b.json.mw) || 0) - (Number(a.json.mw) || 0));\nreturn items.slice(0, 10);"
+      },
+      "id": "11111111-0001-0000-0000-000000000031",
+      "name": "Cap to 10 by MW",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1620, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_WITH_CLAY_WEBHOOK_URL",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"developer\": \"{{ $json.developer }}\",\n  \"project_id\": \"{{ $json.project_id }}\",\n  \"mw\": {{ $json.mw }},\n  \"connection_date\": \"{{ $json.connection_date }}\",\n  \"plant_type\": \"{{ $json.plant_type }}\",\n  \"status\": \"{{ $json.status }}\",\n  \"callback_url\": \"{{ $env.N8N_BASE_URL }}/webhook/clay-callback\"\n}",
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000040",
+      "name": "POST to Clay",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 0]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "clay-callback"
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000041",
+      "name": "Wait for Clay enriched",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2060, 0],
+      "webhookId": "clay-callback"
+    },
+    {
+      "parameters": {
+        "url": "https://api.ted.europa.eu/v3/notices/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "query", "value": "=buyer-name=\"{{ $json.developer }}\" AND classification-cpv IN (09310000, 31682500)" },
+            { "name": "limit", "value": "10" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer REPLACE_WITH_TED_API_KEY" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000050",
+      "name": "TED tenders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2280, -120]
+    },
+    {
+      "parameters": {
+        "url": "=https://news.google.com/rss/search?q={{ encodeURIComponent($json.developer + ' battery storage OR BESS') }}&hl=en-GB&gl=GB&ceid=GB:en",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "text", "neverError": true }
+          }
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000051",
+      "name": "Google News RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2280, 120]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000052",
+      "name": "Merge TED + News",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2500, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stage 5: keyword-only confirmation scoring. No LLM.\n//   +1 per keyword hit per source\n//   +2 per TED tender hit\n//   +1 per news hit\nconst KEYWORDS = [\n  'BESS', 'battery storage', 'MWh', 'construction', 'groundbreaking',\n  'commissioning', 'energization', 'grid connection', 'planning permission'\n];\n\nconst pair = $input.all();\nconst tedRaw  = pair[0]?.json || {};\nconst newsRaw = pair[1]?.json || {};\n\nconst dev = (tedRaw.developer || newsRaw.developer || $('Wait for Clay enriched').first().json.developer || '').toString();\nconst tedHits  = Array.isArray(tedRaw.notices) ? tedRaw.notices : (tedRaw.results || []);\nconst newsBody = typeof newsRaw === 'string' ? newsRaw : (newsRaw.data || newsRaw.body || '');\n\nconst sources = [];\nlet score = 0;\n\nfor (const t of tedHits) {\n  const url = t.uri || t.url || t.publicationUri || '';\n  const snippet = (t.title || t['title-proc'] || JSON.stringify(t)).toString().slice(0, 240);\n  sources.push({ type: 'ted', url, snippet });\n  score += 2;\n  for (const kw of KEYWORDS) {\n    if (snippet.toLowerCase().includes(kw.toLowerCase())) score += 1;\n  }\n}\n\nconst itemRe = /<item[\\s\\S]*?<\\/item>/g;\nconst titleRe = /<title>([\\s\\S]*?)<\\/title>/;\nconst linkRe  = /<link>([\\s\\S]*?)<\\/link>/;\nconst items = (newsBody.match(itemRe) || []).slice(0, 5);\nfor (const it of items) {\n  const title = (it.match(titleRe)?.[1] || '').replace(/<!\\[CDATA\\[|\\]\\]>/g, '').trim();\n  const link  = (it.match(linkRe)?.[1] || '').trim();\n  if (!title) continue;\n  sources.push({ type: 'news', url: link, snippet: title });\n  score += 1;\n  for (const kw of KEYWORDS) {\n    if (title.toLowerCase().includes(kw.toLowerCase())) score += 1;\n  }\n}\n\n// Carry through enriched fields from the Wait callback.\nconst enriched = $('Wait for Clay enriched').first().json;\n\nreturn [{\n  json: {\n    ...enriched,\n    developer: dev || enriched.developer,\n    confirmation_score: score,\n    confirmation_sources: sources,\n    ted_hits: tedHits.length,\n    news_hits: items.length,\n    other_tec_count: Number(enriched.other_tec_count || 0)\n  }\n}];"
+      },
+      "id": "11111111-0001-0000-0000-000000000053",
+      "name": "Score signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2720, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ ($json.confirmation_score >= 4) || ($json.other_tec_count > 1 && $json.news_hits > 0) }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "tier1"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.confirmation_score >= 1 }}",
+                    "rightValue": true,
+                    "operator": { "type": "boolean", "operation": "true" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "tier2"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "drop" }
+      },
+      "id": "11111111-0001-0000-0000-000000000060",
+      "name": "Switch: Tier",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [2940, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "t1", "name": "tier", "value": "tier1", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000061",
+      "name": "Set tier=tier1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [3160, -120]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "t2", "name": "tier", "value": "tier2", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000062",
+      "name": "Set tier=tier2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [3160, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.tier === 'tier1' ? $env.SLACK_WEBHOOK_TIER1 : $env.SLACK_WEBHOOK_TIER2 }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"blocks\": [\n    { \"type\": \"header\", \"text\": { \"type\": \"plain_text\", \"text\": {{ JSON.stringify($json.developer + ' — ' + ($json.tier === 'tier1' ? 'TIER 1' : 'TIER 2')) }} } },\n    { \"type\": \"section\", \"fields\": [\n      { \"type\": \"mrkdwn\", \"text\": \"*Developer*\\n*{{ $json.developer }}*\" },\n      { \"type\": \"mrkdwn\", \"text\": \"*MW*\\n{{ $json.mw }} MW\" },\n      { \"type\": \"mrkdwn\", \"text\": \"*Connection date*\\n{{ $json.connection_date }}\" },\n      { \"type\": \"mrkdwn\", \"text\": \"*Tier*\\n{{ $json.tier }} (score {{ $json.confirmation_score }})\" }\n    ] },\n    { \"type\": \"divider\" },\n    { \"type\": \"actions\", \"elements\": {{ JSON.stringify(($json.confirmation_sources || []).slice(0,3).map((s, i) => ({ type: 'button', text: { type: 'plain_text', text: (s.type || 'src').toUpperCase() + ' ' + (i+1) }, url: s.url || 'https://example.com', value: 'src_' + i }))) }} }\n  ]\n}",
+        "options": {}
+      },
+      "id": "11111111-0001-0000-0000-000000000070",
+      "name": "Slack send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3380, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into fired_signals\n  (developer, tier, confirmation_score, confirmation_sources, tec_project_id, slack_message_ts)\nvalues\n  ($1, $2, $3, $4, $5, $6)\nreturning signal_id;",
+        "options": {
+          "queryReplacement": "={{ $json.developer }},={{ $json.tier }},={{ $json.confirmation_score }},={{ JSON.stringify($json.confirmation_sources) }},={{ $json.project_id }},={{ $json.ts || null }}"
+        }
+      },
+      "id": "11111111-0001-0000-0000-000000000080",
+      "name": "Log fired_signals",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3600, 0],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CRED_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Stage 1 — Source\nNESO TEC register (UK transmission queue).\nDatapackage JSON resolves the CSV URL dynamically — the path changes between releases.",
+        "height": 220, "width": 380, "color": 4
+      },
+      "id": "11111111-0001-0000-0000-000000000901",
+      "name": "Sticky 1 — Source",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [40, -260]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 2 — Snapshot + Diff\nUpsert every row of this pull into `tec_snapshots`,\nthen return rows present in latest pull but not in the previous one.\nFirst-run safe: if no previous pull exists, all rows are returned.",
+        "height": 220, "width": 460, "color": 4
+      },
+      "id": "11111111-0001-0000-0000-000000000902",
+      "name": "Sticky 2 — Snapshot+Diff",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [720, -260]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 3 — Filter\nKeep BESS only (`/battery|storage|bess/i`)\nAND connection date inside 2027-01-01 → 2035-12-31.\nThen cap at 10 developers/run by MW desc to keep Clay credits ≤ $1.",
+        "height": 220, "width": 440, "color": 5
+      },
+      "id": "11111111-0001-0000-0000-000000000903",
+      "name": "Sticky 3 — Filter",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1380, -260]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 4 — Enrich (Clay)\nPOST each developer to a Clay table.\nClay enriches: domain, LinkedIn, news, hiring signals,\ncount of other TEC entries by same dev.\nClay POSTs back to the Wait webhook.",
+        "height": 240, "width": 460, "color": 6
+      },
+      "id": "11111111-0001-0000-0000-000000000904",
+      "name": "Sticky 4 — Enrich",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1820, -280]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 5 — Confirm\nParallel: TED tenders (CPV 09310000 / 31682500) + Google News RSS.\nCode node scores keyword bag — NO LLM.\n+1 per keyword, +2 per TED hit, +1 per news hit.",
+        "height": 240, "width": 460, "color": 3
+      },
+      "id": "11111111-0001-0000-0000-000000000905",
+      "name": "Sticky 5 — Confirm",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2280, -280]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 6 — Route\n- Tier 1: score ≥ 4  OR  (multiple TEC entries AND any news hit)\n- Tier 2: score ≥ 1\n- Drop: score = 0  (phantom-project guard)",
+        "height": 200, "width": 380, "color": 7
+      },
+      "id": "11111111-0001-0000-0000-000000000906",
+      "name": "Sticky 6 — Route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2920, -260]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 7 — Slack\nIncoming webhook, Block Kit:\nbold developer header, MW prominent, tier + score,\nup to 3 source link buttons (TED / news).",
+        "height": 200, "width": 380, "color": 2
+      },
+      "id": "11111111-0001-0000-0000-000000000907",
+      "name": "Sticky 7 — Slack",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [3340, -260]
+    },
+    {
+      "parameters": {
+        "content": "## Stage 8 — Log\nWrite to `fired_signals` for the audit trail.\nRuns after Slack so we capture the message ts when available.",
+        "height": 200, "width": 380, "color": 2
+      },
+      "id": "11111111-0001-0000-0000-000000000908",
+      "name": "Sticky 8 — Log",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [3580, -260]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "GET datapackage", "type": "main", "index": 0 }]]
+    },
+    "Cron Mon 06:00 UTC": {
+      "main": [[{ "node": "GET datapackage", "type": "main", "index": 0 }]]
+    },
+    "GET datapackage": {
+      "main": [[{ "node": "Resolve CSV URL", "type": "main", "index": 0 }]]
+    },
+    "Resolve CSV URL": {
+      "main": [[{ "node": "GET CSV", "type": "main", "index": 0 }]]
+    },
+    "GET CSV": {
+      "main": [[{ "node": "Parse CSV", "type": "main", "index": 0 }]]
+    },
+    "Parse CSV": {
+      "main": [[{ "node": "Upsert tec_snapshots", "type": "main", "index": 0 }]]
+    },
+    "Upsert tec_snapshots": {
+      "main": [[{ "node": "Diff vs previous pull", "type": "main", "index": 0 }]]
+    },
+    "Diff vs previous pull": {
+      "main": [[{ "node": "Filter: BESS + window", "type": "main", "index": 0 }]]
+    },
+    "Filter: BESS + window": {
+      "main": [[{ "node": "Cap to 10 by MW", "type": "main", "index": 0 }]]
+    },
+    "Cap to 10 by MW": {
+      "main": [[{ "node": "POST to Clay", "type": "main", "index": 0 }]]
+    },
+    "POST to Clay": {
+      "main": [[{ "node": "Wait for Clay enriched", "type": "main", "index": 0 }]]
+    },
+    "Wait for Clay enriched": {
+      "main": [[
+        { "node": "TED tenders", "type": "main", "index": 0 },
+        { "node": "Google News RSS", "type": "main", "index": 0 }
+      ]]
+    },
+    "TED tenders": {
+      "main": [[{ "node": "Merge TED + News", "type": "main", "index": 0 }]]
+    },
+    "Google News RSS": {
+      "main": [[{ "node": "Merge TED + News", "type": "main", "index": 1 }]]
+    },
+    "Merge TED + News": {
+      "main": [[{ "node": "Score signals", "type": "main", "index": 0 }]]
+    },
+    "Score signals": {
+      "main": [[{ "node": "Switch: Tier", "type": "main", "index": 0 }]]
+    },
+    "Switch: Tier": {
+      "main": [
+        [{ "node": "Set tier=tier1", "type": "main", "index": 0 }],
+        [{ "node": "Set tier=tier2", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Set tier=tier1": {
+      "main": [[{ "node": "Slack send", "type": "main", "index": 0 }]]
+    },
+    "Set tier=tier2": {
+      "main": [[{ "node": "Slack send", "type": "main", "index": 0 }]]
+    },
+    "Slack send": {
+      "main": [[{ "node": "Log fired_signals", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {},
+  "versionId": "v0-bess-demo",
+  "id": "bess-signal-detection",
+  "meta": { "instanceId": "demo" },
+  "tags": []
+}

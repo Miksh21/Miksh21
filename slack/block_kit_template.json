@@ -1,0 +1,31 @@
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{ $json.developer }} — {{ $json.tier === 'tier1' ? 'TIER 1' : 'TIER 2' }}"
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        { "type": "mrkdwn", "text": "*Developer*\n*{{ $json.developer }}*" },
+        { "type": "mrkdwn", "text": "*MW*\n{{ $json.mw }} MW" },
+        { "type": "mrkdwn", "text": "*Connection date*\n{{ $json.connection_date }}" },
+        { "type": "mrkdwn", "text": "*Tier*\n{{ $json.tier }} (score {{ $json.confirmation_score }})" }
+      ]
+    },
+    { "type": "divider" },
+    {
+      "type": "context",
+      "elements": [
+        { "type": "mrkdwn", "text": "TEC project: `{{ $json.project_id }}`  •  TED hits: {{ $json.ted_hits }}  •  News hits: {{ $json.news_hits }}  •  Other TEC entries: {{ $json.other_tec_count }}" }
+      ]
+    },
+    {
+      "type": "actions",
+      "elements": "={{ ($json.confirmation_sources || []).slice(0,3).map((s, i) => ({ type: 'button', text: { type: 'plain_text', text: (s.type || 'src').toUpperCase() + ' ' + (i+1) }, url: s.url || 'https://example.com', value: 'src_' + i })) }}"
+    }
+  ]
+}
