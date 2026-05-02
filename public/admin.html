@@ -43,10 +43,27 @@
     .preset { font-size: 15px; padding: 12px 6px; }
     .footer { color: var(--muted); font-size: 12px; text-align:center; margin: 16px 0 24px; }
     a { color: var(--accent); text-decoration: none; }
+    #gate { display:flex; flex-direction:column; gap:12px; }
+    #gate .err { color: var(--red); font-size: 14px; min-height: 18px; }
+    .hidden { display:none !important; }
+    .lock-note { font-size: 13px; color: var(--muted); margin-top: 8px; text-align:center; }
   </style>
 </head>
 <body>
   <h1>Countdown · Admin</h1>
+
+  <div class="card" id="gateCard">
+    <div id="gate">
+      <div>
+        <label for="rabbit">Jméno králíka</label>
+        <input type="text" id="rabbit" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…" />
+      </div>
+      <button class="primary" id="rabbitBtn">Odemknout</button>
+      <div class="err" id="rabbitErr"></div>
+    </div>
+  </div>
+
+  <div id="adminPanel" class="hidden">
 
   <div class="card">
     <div class="time" id="time">00:00</div>
@@ -112,6 +129,8 @@
     </div>
   </div>
 
+  </div><!-- /#adminPanel -->
+
   <div class="footer">
     Display URL: <a href="/display" target="_blank">/display</a>
   </div>
@@ -128,6 +147,34 @@
     let state = null;
     let clockOffset = 0;
     let durationTouched = false;
+    let authed = false;
+
+    const gateCard = $('gateCard');
+    const adminPanel = $('adminPanel');
+    const rabbit = $('rabbit');
+    const rabbitBtn = $('rabbitBtn');
+    const rabbitErr = $('rabbitErr');
+
+    function tryAuth(answer) {
+      rabbitErr.textContent = '';
+      socket.emit('auth', answer, (res) => {
+        if (res && res.ok) {
+          authed = true;
+          try { localStorage.setItem('rabbit', answer); } catch (_) {}
+          gateCard.classList.add('hidden');
+          adminPanel.classList.remove('hidden');
+        } else {
+          authed = false;
+          try { localStorage.removeItem('rabbit'); } catch (_) {}
+          rabbitErr.textContent = 'Špatná odpověď.';
+          rabbit.focus();
+          rabbit.select();
+        }
+      });
+    }
+
+    rabbitBtn.addEventListener('click', () => tryAuth(rabbit.value));
+    rabbit.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryAuth(rabbit.value); });
 
     function now() { return Date.now() + clockOffset; }
 
@@ -168,8 +215,16 @@
       ss.value = total % 60;
     }
 
-    socket.on('connect',    () => { dot.classList.add('on');    statusText.textContent = 'connected'; });
-    socket.on('disconnect', () => { dot.classList.remove('on'); statusText.textContent = 'disconnected'; });
+    socket.on('connect', () => {
+      dot.classList.add('on'); statusText.textContent = 'connected';
+      let saved = '';
+      try { saved = localStorage.getItem('rabbit') || ''; } catch (_) {}
+      if (saved) tryAuth(saved);
+    });
+    socket.on('disconnect', () => {
+      dot.classList.remove('on'); statusText.textContent = 'disconnected';
+      authed = false;
+    });
 
     socket.on('state', (st) => {
       const prevMessage = state?.message;

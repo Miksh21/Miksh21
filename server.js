@@ -9,6 +9,22 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
+// Admin gate: visitors must answer "Jméno králíka" with one of these names
+// (case-insensitive, diacritics optional) before they can control the timer.
+const RABBIT_ANSWERS = new Set(['hoblinka', 'hoblinac', 'hoblina']);
+
+function normalizeAnswer(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isCorrectAnswer(s) {
+  return RABBIT_ANSWERS.has(normalizeAnswer(s));
+}
+
 // Authoritative timer state. Time is computed from a target timestamp when
 // running, or held as a static remaining value when paused.
 const state = {
@@ -94,31 +110,43 @@ app.get('/admin', (_req, res) => {
 });
 
 io.on('connection', (socket) => {
+  socket.data.authed = false;
   socket.emit('state', snapshot());
 
-  socket.on('set-duration', (ms) => {
+  socket.on('auth', (answer, ack) => {
+    const ok = isCorrectAnswer(answer);
+    socket.data.authed = ok;
+    if (typeof ack === 'function') ack({ ok });
+  });
+
+  const guard = (handler) => (...args) => {
+    if (!socket.data.authed) return;
+    handler(...args);
+  };
+
+  socket.on('set-duration', guard((ms) => {
     setDuration(Number(ms));
     broadcast();
-  });
+  }));
 
-  socket.on('start', () => { start(); broadcast(); });
-  socket.on('pause', () => { pause(); broadcast(); });
-  socket.on('reset', () => { reset(); broadcast(); });
+  socket.on('start', guard(() => { start(); broadcast(); }));
+  socket.on('pause', guard(() => { pause(); broadcast(); }));
+  socket.on('reset', guard(() => { reset(); broadcast(); }));
 
-  socket.on('adjust', (deltaMs) => {
+  socket.on('adjust', guard((deltaMs) => {
     adjust(Number(deltaMs));
     broadcast();
-  });
+  }));
 
-  socket.on('set-message', (msg) => {
+  socket.on('set-message', guard((msg) => {
     state.message = String(msg || '').slice(0, 200);
     broadcast();
-  });
+  }));
 
-  socket.on('set-blink', (b) => {
+  socket.on('set-blink', guard((b) => {
     state.blink = !!b;
     broadcast();
-  });
+  }));
 });
 
 // Periodically check whether a running timer has hit zero so we can stop it
