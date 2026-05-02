@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0c" />
+  <title>Countdown · Admin</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b0b0c; --panel:#17181b; --line:#2a2c31; --fg:#fff; --muted:#8a8f98; --accent:#3b82f6; --green:#22c55e; --red:#ef4444; --yellow:#eab308; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      min-height: 100%;
+    }
+    body { padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); max-width: 560px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 600; margin: 16px 4px 12px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+    .card { background: var(--panel); border:1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+    .time { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 64px; text-align:center; letter-spacing:-0.02em; line-height: 1; }
+    .time.warn { color: var(--yellow); } .time.crit { color: var(--red); } .time.done { color: var(--red); }
+    .row { display:grid; gap: 8px; }
+    .row.cols-2 { grid-template-columns: 1fr 1fr; }
+    .row.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+    .row.cols-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    button, .btn {
+      appearance:none; border:1px solid var(--line); background:#22242a; color:var(--fg);
+      border-radius: 12px; padding: 14px 12px; font-size: 17px; font-weight: 600;
+      cursor: pointer; touch-action: manipulation; transition: transform 50ms, background 120ms;
+    }
+    button:active { transform: scale(0.98); }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    button.success { background: var(--green); border-color: var(--green); color:#062b13; }
+    button.danger  { background: var(--red);   border-color: var(--red); }
+    button.ghost   { background: transparent; }
+    button.toggle.on { background: var(--yellow); border-color: var(--yellow); color:#2a2300; }
+    input[type=number], input[type=text] {
+      width: 100%; background:#0f1013; color:var(--fg); border:1px solid var(--line);
+      border-radius: 10px; padding: 12px; font-size: 17px;
+    }
+    label { font-size: 13px; color: var(--muted); display:block; margin-bottom: 6px; }
+    .status { display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--muted); margin: 4px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+    .dot.on { background: var(--green); }
+    .preset { font-size: 15px; padding: 12px 6px; }
+    .footer { color: var(--muted); font-size: 12px; text-align:center; margin: 16px 0 24px; }
+    a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Countdown · Admin</h1>
+
+  <div class="card">
+    <div class="time" id="time">00:00</div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
+  </div>
+
+  <div class="card">
+    <div class="row cols-2" style="margin-bottom:8px">
+      <button class="success" id="startBtn">Start</button>
+      <button class="danger"  id="pauseBtn">Pause</button>
+    </div>
+    <div class="row cols-2">
+      <button class="ghost" id="resetBtn">Reset</button>
+      <button class="toggle" id="blinkBtn">Blink: off</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Adjust running timer</label>
+    <div class="row cols-4">
+      <button data-adj="-60000">−1m</button>
+      <button data-adj="-10000">−10s</button>
+      <button data-adj="10000">+10s</button>
+      <button data-adj="60000">+1m</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Set duration</label>
+    <div class="row cols-3" style="margin-bottom: 10px">
+      <button class="preset" data-dur="60000">1:00</button>
+      <button class="preset" data-dur="180000">3:00</button>
+      <button class="preset" data-dur="300000">5:00</button>
+      <button class="preset" data-dur="600000">10:00</button>
+      <button class="preset" data-dur="900000">15:00</button>
+      <button class="preset" data-dur="1800000">30:00</button>
+    </div>
+    <div class="row cols-3">
+      <div>
+        <label>Hours</label>
+        <input type="number" id="hh" min="0" max="23" value="0" inputmode="numeric" />
+      </div>
+      <div>
+        <label>Minutes</label>
+        <input type="number" id="mm" min="0" max="59" value="5" inputmode="numeric" />
+      </div>
+      <div>
+        <label>Seconds</label>
+        <input type="number" id="ss" min="0" max="59" value="0" inputmode="numeric" />
+      </div>
+    </div>
+    <div style="margin-top: 10px">
+      <button class="primary" id="setDurBtn" style="width:100%">Set &amp; load</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Message on display</label>
+    <input type="text" id="msg" placeholder="Optional message…" maxlength="200" />
+    <div class="row cols-2" style="margin-top: 10px">
+      <button id="sendMsg" class="primary">Send</button>
+      <button id="clearMsg" class="ghost">Clear</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    Display URL: <a href="/display" target="_blank">/display</a>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const timeEl = $('time'), dot = $('dot'), statusText = $('statusText');
+    const startBtn = $('startBtn'), pauseBtn = $('pauseBtn'), resetBtn = $('resetBtn'), blinkBtn = $('blinkBtn');
+    const hh = $('hh'), mm = $('mm'), ss = $('ss');
+    const msgEl = $('msg'), sendMsg = $('sendMsg'), clearMsg = $('clearMsg');
+
+    const socket = io();
+    let state = null;
+    let clockOffset = 0;
+    let durationTouched = false;
+
+    function now() { return Date.now() + clockOffset; }
+
+    function remaining() {
+      if (!state) return 0;
+      if (state.running && state.endsAt != null) {
+        return Math.max(0, state.endsAt - now());
+      }
+      return Math.max(0, state.remainingMs);
+    }
+
+    function fmt(ms) {
+      const totalSec = Math.ceil(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      const pad = (n) => String(n).padStart(2, '0');
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    function render() {
+      if (!state) return;
+      const ms = remaining();
+      timeEl.textContent = fmt(ms);
+      timeEl.classList.remove('warn','crit','done');
+      if (ms <= 0)          timeEl.classList.add('done');
+      else if (ms <= 10000) timeEl.classList.add('crit');
+      else if (ms <= 60000) timeEl.classList.add('warn');
+
+      blinkBtn.classList.toggle('on', !!state.blink);
+      blinkBtn.textContent = `Blink: ${state.blink ? 'on' : 'off'}`;
+    }
+
+    function fillDurationInputs(ms) {
+      const total = Math.floor(ms / 1000);
+      hh.value = Math.floor(total / 3600);
+      mm.value = Math.floor((total % 3600) / 60);
+      ss.value = total % 60;
+    }
+
+    socket.on('connect',    () => { dot.classList.add('on');    statusText.textContent = 'connected'; });
+    socket.on('disconnect', () => { dot.classList.remove('on'); statusText.textContent = 'disconnected'; });
+
+    socket.on('state', (st) => {
+      const prevMessage = state?.message;
+      state = st;
+      clockOffset = st.serverNow - Date.now();
+
+      if (!durationTouched) fillDurationInputs(st.durationMs);
+
+      if (prevMessage !== st.message && document.activeElement !== msgEl) {
+        msgEl.value = st.message || '';
+      }
+      render();
+    });
+
+    [hh, mm, ss].forEach((el) => {
+      el.addEventListener('input', () => { durationTouched = true; });
+    });
+
+    setInterval(render, 100);
+
+    startBtn.addEventListener('click', () => socket.emit('start'));
+    pauseBtn.addEventListener('click', () => socket.emit('pause'));
+    resetBtn.addEventListener('click', () => socket.emit('reset'));
+    blinkBtn.addEventListener('click', () => socket.emit('set-blink', !state?.blink));
+
+    document.querySelectorAll('button[data-adj]').forEach((b) => {
+      b.addEventListener('click', () => socket.emit('adjust', Number(b.dataset.adj)));
+    });
+
+    document.querySelectorAll('button[data-dur]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const ms = Number(b.dataset.dur);
+        durationTouched = false;
+        socket.emit('set-duration', ms);
+      });
+    });
+
+    $('setDurBtn').addEventListener('click', () => {
+      const ms = (Number(hh.value) * 3600 + Number(mm.value) * 60 + Number(ss.value)) * 1000;
+      socket.emit('set-duration', ms);
+    });
+
+    sendMsg.addEventListener('click', () => socket.emit('set-message', msgEl.value));
+    clearMsg.addEventListener('click', () => { msgEl.value = ''; socket.emit('set-message', ''); });
+    msgEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') socket.emit('set-message', msgEl.value); });
+  </script>
+</body>
+</html>

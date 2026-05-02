@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Countdown</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0; height: 100%; width: 100%;
+      background: #000; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+      cursor: none;
+    }
+    body { display: flex; align-items: center; justify-content: center; flex-direction: column; }
+    #time {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 0.9;
+      font-size: clamp(120px, 28vw, 640px);
+      transition: color 200ms;
+    }
+    #message {
+      margin-top: 4vh;
+      font-size: clamp(24px, 4vw, 80px);
+      opacity: 0.85;
+      text-align: center;
+      max-width: 90vw;
+    }
+    .warn  { color: #f4c430; }
+    .crit  { color: #ff3b30; }
+    .done  { color: #ff3b30; }
+    .blink { animation: blink 1s steps(2, start) infinite; }
+    @keyframes blink { to { visibility: hidden; } }
+    #status {
+      position: fixed; bottom: 12px; right: 16px;
+      font-size: 14px; opacity: 0.35;
+    }
+  </style>
+</head>
+<body>
+  <div id="time">00:00</div>
+  <div id="message"></div>
+  <div id="status">disconnected</div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const timeEl = document.getElementById('time');
+    const msgEl = document.getElementById('message');
+    const statusEl = document.getElementById('status');
+
+    const socket = io();
+    let state = null;
+    let clockOffset = 0; // serverNow - clientNow
+
+    function now() { return Date.now() + clockOffset; }
+
+    function remaining() {
+      if (!state) return 0;
+      if (state.running && state.endsAt != null) {
+        return Math.max(0, state.endsAt - now());
+      }
+      return Math.max(0, state.remainingMs);
+    }
+
+    function fmt(ms) {
+      const totalSec = Math.ceil(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      const pad = (n) => String(n).padStart(2, '0');
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    function render() {
+      if (!state) return;
+      const ms = remaining();
+      timeEl.textContent = fmt(ms);
+
+      timeEl.classList.toggle('blink', !!state.blink);
+      timeEl.classList.remove('warn', 'crit', 'done');
+      if (ms <= 0)            timeEl.classList.add('done');
+      else if (ms <= 10000)   timeEl.classList.add('crit');
+      else if (ms <= 60000)   timeEl.classList.add('warn');
+
+      msgEl.textContent = state.message || '';
+    }
+
+    socket.on('connect', () => { statusEl.textContent = ''; });
+    socket.on('disconnect', () => { statusEl.textContent = 'disconnected'; });
+
+    socket.on('state', (s) => {
+      state = s;
+      clockOffset = s.serverNow - Date.now();
+      render();
+    });
+
+    // Smooth local tick
+    setInterval(render, 100);
+
+    // Allow toggling fullscreen by clicking/tapping the screen.
+    document.body.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    });
+  </script>
+</body>
+</html>
