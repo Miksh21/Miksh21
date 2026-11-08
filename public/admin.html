@@ -31,8 +31,19 @@
     button.success { background: var(--green); border-color: var(--green); color:#062b13; }
     button.danger  { background: var(--red);   border-color: var(--red); }
     button.ghost   { background: transparent; }
+    button.preset.on { outline: 2px solid var(--yellow); }
     button.toggle.on { background: var(--yellow); border-color: var(--yellow); color:#2a2300; }
-    input[type=number], input[type=text] {
+    textarea { resize: vertical; min-height: 120px; font-family: inherit; line-height: 1.4; }
+    .pair { width: 100%; text-align: left; margin-bottom: 6px; font-size: 15px; padding: 10px 12px; display:flex; gap:10px; align-items:baseline; }
+    .pair .d { font-variant-numeric: tabular-nums; min-width: 44px; font-weight: 700; }
+    .pair .t { color: var(--muted); font-weight: 500; font-size: 13px; display:block; }
+    .pair.on { background: var(--yellow); border-color: var(--yellow); color:#2a2300; }
+    .pair.on .t { color:#5a4a00; }
+    .prow { border-top: 1px solid var(--line); padding: 10px 0; display:grid; grid-template-columns: 70px 1fr 40px; gap: 6px; }
+    .prow input { padding: 10px; font-size: 16px; }
+    .prow .full { grid-column: 1 / -1; }
+    .prow .del { padding: 0; font-size: 18px; }
+    input[type=number], input[type=text], textarea {
       width: 100%; background:#0f1013; color:var(--fg); border:1px solid var(--line);
       border-radius: 10px; padding: 12px; font-size: 17px;
     }
@@ -79,6 +90,37 @@
       <button class="ghost" id="resetBtn">Reset</button>
       <button class="toggle" id="blinkBtn">Blink: off</button>
     </div>
+    <div style="margin-top:8px">
+      <button class="toggle" id="lastMinBtn" style="width:100%">Poslední minuta: on</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Program</label>
+    <div class="row cols-2" style="margin-bottom: 10px">
+      <button id="prevPair">◀ Předchozí</button>
+      <button class="primary" id="nextPair">Další ▶</button>
+    </div>
+    <div id="pairList"></div>
+    <label style="margin-top: 12px">Na displeji teď (můžeš přímo přepsat)</label>
+    <input type="text" id="dispN1" placeholder="jméno 1" maxlength="90" style="margin-bottom: 6px" />
+    <input type="text" id="dispN2" placeholder="jméno 2 (nepovinné)" maxlength="90" />
+    <div class="row cols-2" style="margin-top: 8px">
+      <button id="sendMsg" class="primary">Poslat na displej</button>
+      <button class="ghost" id="hidePair">Skrýt jména</button>
+    </div>
+    <details id="progEdit" style="margin-top: 12px">
+      <summary style="color: var(--muted); font-size: 14px; cursor: pointer">Upravit program</summary>
+      <div id="progRows" style="margin-top: 8px"></div>
+      <button id="addRow" style="width:100%; margin-top: 6px">+ Přidat řádek</button>
+      <div class="row cols-2" style="margin-top: 10px">
+        <button id="csvImport">Nahrát CSV</button>
+        <button id="csvExport">Stáhnout CSV</button>
+      </div>
+      <input type="file" id="csvFile" accept=".csv,.txt,text/csv" class="hidden" />
+      <div class="lock-note">CSV: sloupce doba;téma;jméno 1;jméno 2, první řádek hlavička. Stáhnout CSV dá i vzor.</div>
+      <div class="lock-note">Doba v minutách (5) nebo min:s (4:30). Jméno 2 může zůstat prázdné. Ukládá se v tomhle zařízení, vydrží i usnutí Renderu.</div>
+    </details>
   </div>
 
   <div class="card">
@@ -121,12 +163,13 @@
   </div>
 
   <div class="card">
-    <label>Message on display</label>
-    <input type="text" id="msg" placeholder="Optional message…" maxlength="200" />
-    <div class="row cols-2" style="margin-top: 10px">
-      <button id="sendMsg" class="primary">Send</button>
-      <button id="clearMsg" class="ghost">Clear</button>
+    <label>Nadpis nad jmény</label>
+    <div class="row cols-3" style="margin-bottom: 8px">
+      <button class="preset" data-label="NEXT">NEXT</button>
+      <button class="preset" data-label="ZVĚTE">ZVĚTE</button>
+      <button class="preset" data-label="">bez nadpisu</button>
     </div>
+    <input type="text" id="label" placeholder="vlastní nadpis…" maxlength="40" style="margin-bottom: 12px" />
   </div>
 
   </div><!-- /#adminPanel -->
@@ -141,7 +184,7 @@
     const timeEl = $('time'), dot = $('dot'), statusText = $('statusText');
     const startBtn = $('startBtn'), pauseBtn = $('pauseBtn'), resetBtn = $('resetBtn'), blinkBtn = $('blinkBtn');
     const hh = $('hh'), mm = $('mm'), ss = $('ss');
-    const msgEl = $('msg'), sendMsg = $('sendMsg'), clearMsg = $('clearMsg');
+    const dispN1 = $('dispN1'), dispN2 = $('dispN2'), sendMsg = $('sendMsg');
 
     const socket = io();
     let state = null;
@@ -206,6 +249,14 @@
 
       blinkBtn.classList.toggle('on', !!state.blink);
       blinkBtn.textContent = `Blink: ${state.blink ? 'on' : 'off'}`;
+      lastMinBtn.classList.toggle('on', !!state.lastMinute);
+      lastMinBtn.textContent = `Poslední minuta: ${state.lastMinute ? 'on' : 'off'}`;
+      document.querySelectorAll('button[data-label]').forEach((b) => {
+        b.classList.toggle('on', b.dataset.label === (state.label || ''));
+      });
+      document.querySelectorAll('#pairList .pair').forEach((b) => {
+        b.classList.toggle('on', Number(b.dataset.i) === activeRow && b.dataset.msg === (state.message || ''));
+      });
     }
 
     function fillDurationInputs(ms) {
@@ -233,9 +284,12 @@
 
       if (!durationTouched) fillDurationInputs(st.durationMs);
 
-      if (prevMessage !== st.message && document.activeElement !== msgEl) {
-        msgEl.value = st.message || '';
+      if (prevMessage !== st.message && document.activeElement !== dispN1 && document.activeElement !== dispN2) {
+        const parts = (st.message || '').split('\n');
+        dispN1.value = parts[0] || '';
+        dispN2.value = parts.slice(1).join(' ');
       }
+      if (document.activeElement !== labelEl) labelEl.value = st.label || '';
       render();
     });
 
@@ -249,6 +303,101 @@
     pauseBtn.addEventListener('click', () => socket.emit('pause'));
     resetBtn.addEventListener('click', () => socket.emit('reset'));
     blinkBtn.addEventListener('click', () => socket.emit('set-blink', !state?.blink));
+    const lastMinBtn = $('lastMinBtn'), labelEl = $('label');
+    lastMinBtn.addEventListener('click', () => socket.emit('set-last-minute', !state?.lastMinute));
+    document.querySelectorAll('button[data-label]').forEach((b) => {
+      b.addEventListener('click', () => socket.emit('set-label', b.dataset.label));
+    });
+    // Program: rows of duration / topic / name 1 / name 2, kept in this
+    // device's localStorage. Loading a row sets the timer (not started) and
+    // puts the names on the display, each name on its own line.
+    let program = [], activeRow = -1;
+    try {
+      program = JSON.parse(localStorage.getItem('program') || '[]');
+      activeRow = Number(localStorage.getItem('activeRow') ?? -1);
+    } catch (_) { program = []; }
+    if (!program.length) program = [{ d: '5', t: '', n1: '', n2: '' }];
+    const save = () => {
+      try {
+        localStorage.setItem('program', JSON.stringify(program));
+        localStorage.setItem('activeRow', String(activeRow));
+      } catch (_) {}
+    };
+    const pairList = $('pairList'), progRows = $('progRows');
+    function parseDur(v) {
+      v = String(v || '').trim().replace(',', '.');
+      if (!v) return 0;
+      if (v.includes(':')) {
+        const [m, s] = v.split(':');
+        return ((Number(m) || 0) * 60 + (Number(s) || 0)) * 1000;
+      }
+      return Math.round((Number(v) || 0) * 60) * 1000;
+    }
+    const rowMsg = (r) => [r.n1, r.n2].map((x) => (x || '').trim()).filter(Boolean).join('\n');
+    const esc = (x) => String(x || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    function loadRow(i) {
+      const r = program[i];
+      if (!r) return;
+      activeRow = i; save();
+      const ms = parseDur(r.d);
+      if (ms > 0) { durationTouched = false; socket.emit('set-duration', ms); }
+      socket.emit('set-message', rowMsg(r));
+      render();
+    }
+    function drawPairs() {
+      pairList.innerHTML = '';
+      program.forEach((r, i) => {
+        if (!r.d && !r.t && !r.n1 && !r.n2) return;
+        const b = document.createElement('button');
+        b.className = 'pair'; b.dataset.i = i; b.dataset.msg = rowMsg(r);
+        const names = [r.n1, r.n2].filter((x) => (x || '').trim()).join(', ');
+        const ms = parseDur(r.d), sec = Math.round(ms / 1000);
+        const dtxt = ms ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : '';
+        b.innerHTML = `<span class="d">${dtxt}</span><span>${r.t ? `<span class="t">${esc(r.t)}</span>` : ''}${esc(names)}</span>`;
+        b.addEventListener('click', () => loadRow(i));
+        pairList.appendChild(b);
+      });
+      render();
+    }
+    function drawRows() {
+      progRows.innerHTML = '';
+      program.forEach((r, i) => {
+        const el = document.createElement('div');
+        el.className = 'prow';
+        el.innerHTML = `
+          <input type="text" inputmode="decimal" placeholder="min" data-k="d" value="${esc(r.d)}" />
+          <input type="text" placeholder="téma" data-k="t" value="${esc(r.t)}" />
+          <button class="ghost del" title="smazat">×</button>
+          <input class="full" type="text" placeholder="jméno 1" data-k="n1" value="${esc(r.n1)}" />
+          <input class="full" type="text" placeholder="jméno 2 (nepovinné)" data-k="n2" value="${esc(r.n2)}" />`;
+        el.querySelectorAll('input').forEach((inp) => {
+          inp.addEventListener('input', () => { program[i][inp.dataset.k] = inp.value; save(); drawPairs(); });
+        });
+        el.querySelector('.del').addEventListener('click', () => {
+          program.splice(i, 1);
+          if (activeRow >= program.length) activeRow = program.length - 1;
+          save(); drawRows(); drawPairs();
+        });
+        progRows.appendChild(el);
+      });
+    }
+    $('addRow').addEventListener('click', () => {
+      program.push({ d: '', t: '', n1: '', n2: '' }); save(); drawRows();
+      progRows.lastElementChild?.querySelector('input')?.focus();
+    });
+    function stepPair(d) {
+      if (!program.length) return;
+      const j = activeRow < 0 ? (d > 0 ? 0 : program.length - 1)
+                              : Math.min(program.length - 1, Math.max(0, activeRow + d));
+      loadRow(j);
+    }
+    $('nextPair').addEventListener('click', () => stepPair(1));
+    $('prevPair').addEventListener('click', () => stepPair(-1));
+    $('hidePair').addEventListener('click', () => socket.emit('set-message', ''));
+    drawRows(); drawPairs();
+
+    labelEl.addEventListener('change', () => socket.emit('set-label', labelEl.value));
+    labelEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { socket.emit('set-label', labelEl.value); labelEl.blur(); } });
 
     document.querySelectorAll('button[data-adj]').forEach((b) => {
       b.addEventListener('click', () => socket.emit('adjust', Number(b.dataset.adj)));
@@ -267,9 +416,60 @@
       socket.emit('set-duration', ms);
     });
 
-    sendMsg.addEventListener('click', () => socket.emit('set-message', msgEl.value));
-    clearMsg.addEventListener('click', () => { msgEl.value = ''; socket.emit('set-message', ''); });
-    msgEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') socket.emit('set-message', msgEl.value); });
+    const sendNames = () => {
+      const msg = [dispN1.value, dispN2.value].map((x) => x.trim()).filter(Boolean).join('\n');
+      socket.emit('set-message', msg);
+      dispN1.blur(); dispN2.blur();
+    };
+    sendMsg.addEventListener('click', sendNames);
+    [dispN1, dispN2].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNames(); }));
+
+    // CSV import/export of the program: doba;téma;jméno 1;jméno 2.
+    // Accepts ; , or tab as separator and "quoted" cells; header row optional.
+    function parseCsv(text) {
+      text = text.replace(/^\uFEFF/, '');
+      const first = text.split(/\r?\n/)[0] || '';
+      const sep = [';', '\t', ','].sort((a, b) => first.split(b).length - first.split(a).length)[0];
+      const rows = []; let row = [], cell = '', q = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (q) {
+          if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+          else if (c === '"') q = false;
+          else cell += c;
+        } else if (c === '"') q = true;
+        else if (c === sep) { row.push(cell); cell = ''; }
+        else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i + 1] === '\n') i++;
+          row.push(cell); rows.push(row); row = []; cell = '';
+        } else cell += c;
+      }
+      if (cell || row.length) { row.push(cell); rows.push(row); }
+      const out = rows
+        .map((r) => ({ d: (r[0] || '').trim(), t: (r[1] || '').trim(), n1: (r[2] || '').trim(), n2: (r[3] || '').trim() }))
+        .filter((r) => r.d || r.t || r.n1 || r.n2);
+      if (out.length && !parseDur(out[0].d)) out.shift(); // header
+      return out;
+    }
+    $('csvImport').addEventListener('click', () => $('csvFile').click());
+    $('csvFile').addEventListener('change', async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const rows = parseCsv(await f.text());
+      e.target.value = '';
+      if (!rows.length) { alert('V CSV jsem nenašel žádné řádky.'); return; }
+      if (!confirm(`Nahradit program ${rows.length} řádky z CSV?`)) return;
+      program = rows; activeRow = -1; save(); drawRows(); drawPairs();
+    });
+    $('csvExport').addEventListener('click', () => {
+      const cell = (x) => /[;"\n]/.test(x || '') ? `"${String(x).replace(/"/g, '""')}"` : (x || '');
+      const lines = ['doba;téma;jméno 1;jméno 2']
+        .concat(program.map((r) => [r.d, r.t, r.n1, r.n2].map(cell).join(';')));
+      const blob = new Blob(['\uFEFF' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'program-casomira.csv'; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
   </script>
 </body>
 </html>

@@ -34,6 +34,8 @@ const state = {
   durationMs: 5 * 60 * 1000,
   message: '',
   blink: false,
+  lastMinute: true,    // last minute: alternate names/time, or blink the time
+  label: 'NEXT',       // heading shown above the message on the display
 };
 
 function snapshot() {
@@ -44,6 +46,8 @@ function snapshot() {
     durationMs: state.durationMs,
     message: state.message,
     blink: state.blink,
+    lastMinute: state.lastMinute,
+    label: state.label,
     serverNow: Date.now(),
   };
 }
@@ -140,6 +144,16 @@ io.on('connection', (socket) => {
 
   socket.on('set-message', guard((msg) => {
     state.message = String(msg || '').slice(0, 200);
+    broadcast();
+  }));
+
+  socket.on('set-label', guard((t) => {
+    state.label = String(t || '').slice(0, 40);
+    broadcast();
+  }));
+
+  socket.on('set-last-minute', guard((b) => {
+    state.lastMinute = !!b;
     broadcast();
   }));
 

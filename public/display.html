@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Countdown</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&display=swap" rel="stylesheet" />
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -22,12 +25,28 @@
       font-size: clamp(120px, 28vw, 640px);
       transition: color 200ms;
     }
-    #message {
-      margin-top: 4vh;
-      font-size: clamp(24px, 4vw, 80px);
-      opacity: 0.85;
+    #msgBox {
+      margin-top: 3vh;
+      width: 96vw;
       text-align: center;
-      max-width: 90vw;
+      font-family: "Barlow Condensed", -apple-system, system-ui, sans-serif;
+      font-weight: 600;
+    }
+    #msgBox.hidden { display: none; }
+    #label {
+      color: #f4c430;
+      letter-spacing: 0.14em;
+      line-height: 1;
+      margin-bottom: 0.15em;
+      text-transform: uppercase;
+    }
+    #label:empty { display: none; }
+    #message {
+      font-size: 48px; /* set by layout() */
+      line-height: 1.02;
+      text-wrap: balance;
+      overflow-wrap: normal;
+      white-space: pre-line; /* program rows send "name 1\nname 2" */
     }
     .warn  { color: #f4c430; }
     .crit  { color: #ff3b30; }
@@ -42,13 +61,15 @@
 </head>
 <body>
   <div id="time">00:00</div>
-  <div id="message"></div>
+  <div id="msgBox" class="hidden"><div id="label"></div><div id="message"></div></div>
   <div id="status">disconnected</div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const timeEl = document.getElementById('time');
     const msgEl = document.getElementById('message');
+    const labelEl = document.getElementById('label');
+    const boxEl = document.getElementById('msgBox');
     const statusEl = document.getElementById('status');
 
     const socket = io();
@@ -74,19 +95,74 @@
       return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
     }
 
+    // Last minute: with names on, the screen alternates every 2 s between
+    // the names slide and the bare time at full size; without names the
+    // time blinks. Manual "Blink" in admin still blinks the time always.
+    const SLIDE_MS = 2000;
+
     function render() {
       if (!state) return;
       const ms = remaining();
-      timeEl.textContent = fmt(ms);
+      const text = fmt(ms);
+      timeEl.textContent = text;
 
-      timeEl.classList.toggle('blink', !!state.blink);
+      const msg = state.message || '';
+      const lastMinute = state.lastMinute !== false && ms <= 60000;
+      const timeOnlySlide = lastMinute && msg && Math.floor(now() / SLIDE_MS) % 2 === 1;
+      const showNames = !!msg && !timeOnlySlide;
+
+      timeEl.classList.toggle('blink', !!state.blink || (lastMinute && !msg));
       timeEl.classList.remove('warn', 'crit', 'done');
       if (ms <= 0)            timeEl.classList.add('done');
       else if (ms <= 10000)   timeEl.classList.add('crit');
       else if (ms <= 60000)   timeEl.classList.add('warn');
 
-      msgEl.textContent = state.message || '';
+      if (msgEl.textContent !== msg) msgEl.textContent = msg;
+      const label = msg ? (state.label || '') : '';
+      if (labelEl.textContent !== label) labelEl.textContent = label;
+      boxEl.classList.toggle('hidden', !showNames);
+
+      const key = [showNames, msg, label, text.length, innerWidth, innerHeight].join('|');
+      if (key !== lastKey) { lastKey = key; layout(showNames); }
     }
+
+    // Projected from a 13" laptop and read from 7 to 9 m: everything as big
+    // as the screen allows. Names slide: the names (two lines) take the
+    // largest size that fits the width and at most half the height, the
+    // label sits above them, the time gets the rest. Time alone: the time
+    // fills the screen.
+    let lastKey = '';
+    function layout(showNames) {
+      const W = window.innerWidth, H = window.innerHeight;
+      if (!showNames) {
+        timeEl.style.fontSize = '100px';
+        const w100 = timeEl.getBoundingClientRect().width;
+        timeEl.style.fontSize = Math.min(W * 0.94 / w100 * 100, H * 0.85 / 0.9) + 'px';
+        return;
+      }
+      const maxBoxH = H * 0.55;
+      const setF = (px) => {
+        msgEl.style.fontSize = px + 'px';
+        labelEl.style.fontSize = (px * 0.42) + 'px';
+      };
+      const fits = (px) => {
+        setF(px);
+        return msgEl.scrollWidth <= boxEl.clientWidth + 1 && boxEl.offsetHeight <= maxBoxH;
+      };
+      let lo = 16, hi = Math.max(16, W * 0.2);
+      if (!fits(hi)) {
+        for (let i = 0; i < 18; i++) {
+          const mid = (lo + hi) / 2;
+          if (fits(mid)) lo = mid; else hi = mid;
+        }
+        setF(lo);
+      }
+      const left = H - boxEl.offsetHeight - H * 0.03 - H * 0.04;
+      timeEl.style.fontSize = Math.min(W * 0.28, left / 0.9, 640) + 'px';
+    }
+    window.addEventListener('resize', () => { lastKey = ''; });
+    document.addEventListener('fullscreenchange', () => setTimeout(() => { lastKey = ''; }, 50));
+    document.fonts && document.fonts.ready.then(() => { lastKey = ''; });
 
     socket.on('connect', () => { statusEl.textContent = ''; });
     socket.on('disconnect', () => { statusEl.textContent = 'disconnected'; });
